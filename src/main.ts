@@ -7,38 +7,47 @@ const REACTIONS = ['+1', '-1', 'laugh', 'confused', 'heart', 'hooray', 'rocket',
 type Reaction = typeof REACTIONS[number];
 
 async function run() {
+  const github_token: string = core.getInput('GITHUB_TOKEN');
+  const octokit = github.getOctokit(github_token);
+  const context = github.context;
+
+  async function addReactions(comment_id: number, reactions: string) {
+    const validReactions = <Reaction[]>reactions
+      .replace(/\s/g, '')
+      .split(',')
+      .filter((reaction) => REACTIONS.includes(<Reaction>reaction));
+
+    await Promise.allSettled(
+      validReactions.map(async (content) => {
+        await octokit.rest.reactions.createForIssueComment({
+          ...context.repo,
+          comment_id,
+          content,
+        });
+      }),
+    );
+  }
+
   try {
     const message: string = core.getInput('message');
-    const github_token: string = core.getInput('GITHUB_TOKEN');
     const pr_number: string = core.getInput('pr_number');
     const comment_includes: string = core.getInput('comment_includes');
     const reactions: string = core.getInput('reactions');
-
-    const context = github.context;
     const pull_number = parseInt(pr_number) || context.payload.pull_request?.number;
-
-    const octokit = github.getOctokit(github_token);
 
     if (!pull_number) {
       core.setFailed('No pull request in input neither in current context.');
       return;
     }
 
-    async function addReactions(comment_id: number, reactions: string) {
-      const validReactions = <Reaction[]>reactions
-        .replace(/\s/g, '')
-        .split(',')
-        .filter((reaction) => REACTIONS.includes(<Reaction>reaction));
+    const repoString = core.getInput('repo')
 
-      await Promise.allSettled(
-        validReactions.map(async (content) => {
-          await octokit.rest.reactions.createForIssueComment({
-            ...context.repo,
-            comment_id,
-            content,
-          });
-        }),
-      );
+    let repoObject: { owner: string; repo: string; };
+    if (repoString) {
+      const [owner, repo] = repoString.split('/')
+      repoObject = { owner, repo }
+    } else {
+      repoObject = context.repo
     }
 
     if (comment_includes) {
@@ -47,7 +56,7 @@ async function run() {
       >;
       let comment: ListCommentsResponseDataType[0] | undefined;
       for await (const { data: comments } of octokit.paginate.iterator(octokit.rest.issues.listComments, {
-        ...context.repo,
+        ...repoObject,
         issue_number: pull_number,
       })) {
         comment = comments.find((comment) => comment?.body?.includes(comment_includes));
@@ -56,7 +65,7 @@ async function run() {
 
       if (comment) {
         await octokit.rest.issues.updateComment({
-          ...context.repo,
+          ...repoObject,
           comment_id: comment.id,
           body: message,
         });
@@ -68,7 +77,7 @@ async function run() {
     }
 
     const { data: comment } = await octokit.rest.issues.createComment({
-      ...context.repo,
+      ...repoObject,
       issue_number: pull_number,
       body: message,
     });
